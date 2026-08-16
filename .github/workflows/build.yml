@@ -16,6 +16,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ---------------------------------------------------------------
+      # Cache the debug signing keystore across CI runs.
+      #
+      # Without this, ~/.android/debug.keystore gets regenerated
+      # every build, producing an APK with a brand-new signing
+      # identity. Android then refuses to "update" an installed APK
+      # that was signed with a different identity, showing the
+      # dreaded "Problem parsing the package" error.
+      #
+      # First build creates the keystore; every subsequent build
+      # reuses the cached one, so APK updates install as normal.
+      # ---------------------------------------------------------------
+      - name: Cache debug keystore (stable APK signing)
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: ${{ runner.os }}-my-viewer-debug-keystore-v2
+          restore-keys: |
+            ${{ runner.os }}-my-viewer-debug-keystore-v2
+            ${{ runner.os }}-my-viewer-debug-keystore-v1
+            ${{ runner.os }}-my-viewer-debug-keystore-
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
