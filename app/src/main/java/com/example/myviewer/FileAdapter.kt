@@ -14,10 +14,19 @@ import androidx.recyclerview.widget.RecyclerView
  *
  * It uses [ListAdapter] + [DiffUtil] so list updates animate smoothly
  * and only changed rows are re-bound (efficient for large folders).
+ *
+ * Two callbacks are exposed:
+ *   - [onItemClick]        : tap a file or folder
+ *   - [onItemLongClick]    : long-press a file (used to reset preferences)
+ *
+ * On every bind, the icon size is updated based on the user's current
+ * thumbnail-size preference so the change in Settings takes effect
+ * automatically next time the list scrolls.
  */
 class FileAdapter(
     private val previewLoader: MediaPreviewLoader,
-    private val onItemClick: (FileItem) -> Unit
+    private val onItemClick: (FileItem) -> Unit,
+    private val onItemLongClick: (FileItem) -> Boolean
 ) : ListAdapter<FileItem, FileAdapter.ViewHolder>(DiffCallback()) {
 
     /** View holder for a single row. */
@@ -35,15 +44,25 @@ class FileAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val item = getItem(position)
+        val ctx = holder.itemView.context
+
+        // Read the current thumbnail size and resize the ImageView accordingly.
+        val sizeConfig = ThumbnailSize.getConfig(SettingsManager.getThumbnailSize(ctx))
+        val sizePx = (sizeConfig.imageViewDp * ctx.resources.displayMetrics.density).toInt()
+        holder.icon.layoutParams = holder.icon.layoutParams.apply {
+            width = sizePx
+            height = sizePx
+        }
 
         holder.name.text = item.file.name
         holder.info.text = formatInfo(item)
 
-        // Load the thumbnail (or show a placeholder icon)
-        previewLoader.loadThumbnail(item.file, holder.icon)
+        // Load (or show placeholder) for the thumbnail at the requested size
+        previewLoader.loadThumbnail(item.file, holder.icon, sizeConfig.bitmapPx)
 
-        // Click handler
+        // Click & long-click
         holder.itemView.setOnClickListener { onItemClick(item) }
+        holder.itemView.setOnLongClickListener { onItemLongClick(item) }
     }
 
     /**
@@ -60,7 +79,6 @@ class FileAdapter(
 
     /**
      * Tells DiffUtil how to detect changes between two lists.
-     * This is what makes the list animations efficient.
      */
     class DiffCallback : DiffUtil.ItemCallback<FileItem>() {
         override fun areItemsTheSame(oldItem: FileItem, newItem: FileItem): Boolean {

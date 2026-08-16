@@ -35,11 +35,14 @@ class MediaPreviewLoader(private val context: Context) {
     /**
      * Loads a preview for [file] into [imageView].
      *
-     * First, a placeholder icon is shown immediately. Then a background
-     * task tries to load a real bitmap; if successful it's swapped in.
+     * [targetSizePx] controls the longest side of the source bitmap — pass
+     * a bigger value to get sharper thumbnails (at the cost of memory/CPU).
+     *
+     * The cache key includes the size, so changing the size via Settings
+     * automatically triggers a fresh decode.
      */
-    fun loadThumbnail(file: File, imageView: ImageView) {
-        val key = file.absolutePath + "_" + file.lastModified()
+    fun loadThumbnail(file: File, imageView: ImageView, targetSizePx: Int = 96) {
+        val key = ThumbnailSize.cacheKey(file.absolutePath, file.lastModified(), targetSizePx)
 
         // 1. Try cache first - super fast path
         cache.get(key)?.let { cached ->
@@ -58,7 +61,7 @@ class MediaPreviewLoader(private val context: Context) {
 
         // 3. Load real bitmap in background
         executor.execute {
-            val bitmap = loadBitmap(file, mime)
+            val bitmap = loadBitmap(file, mime, targetSizePx)
             mainHandler.post {
                 // Only apply if this ImageView is still showing the same file
                 if (imageView.tag == key) {
@@ -75,11 +78,11 @@ class MediaPreviewLoader(private val context: Context) {
     }
 
     /** Decides which loader to call based on the file's MIME type. */
-    private fun loadBitmap(file: File, mime: String?): Bitmap? {
+    private fun loadBitmap(file: File, mime: String?, targetSizePx: Int): Bitmap? {
         if (mime == null) return null
         return when {
-            mime.startsWith("image/") -> decodeImage(file)
-            mime.startsWith("video/") -> extractVideoFrame(file)
+            mime.startsWith("image/") -> decodeImage(file, targetSizePx)
+            mime.startsWith("video/") -> extractVideoFrame(file, targetSizePx)
             else -> null
         }
     }
@@ -88,14 +91,14 @@ class MediaPreviewLoader(private val context: Context) {
      * Decodes a downsampled bitmap from the file.
      * Without down-sampling, decoding a 12 MP photo would eat a lot of memory.
      */
-    private fun decodeImage(file: File): Bitmap? {
+    private fun decodeImage(file: File, targetSizePx: Int): Bitmap? {
         return try {
             // First pass: read just the dimensions
             val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(file.absolutePath, boundsOpts)
 
-            // Decide the sample size to roughly match a 96x96 preview
-            val sampleSize = calculateInSampleSize(boundsOpts, 96, 96)
+            // Decide the sample size to roughly match the requested preview size
+            val sampleSize = calculateInSampleSize(boundsOpts, targetSizePx, targetSizePx)
 
             // Second pass: actually decode, with the chosen sample size
             val decodeOpts = BitmapFactory.Options().apply {
@@ -111,8 +114,13 @@ class MediaPreviewLoader(private val context: Context) {
     /**
      * Extracts a single frame from a video file using the system metadata retriever.
      * This is the same API used by Android's Gallery app.
+     *
+     * [targetSizePx] is currently unused for video frames (MediaMetadataRetriever
+     * doesn't expose a sample-size option), but we keep the parameter for API
+     * symmetry with [decodeImage].
      */
-    private fun extractVideoFrame(file: File): Bitmap? {
+    @Suppress("UNUSED_PARAMETER")
+    private fun extractVideoFrame(file: File, targetSizePx: Int): Bitmap? {
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(file.absolutePath)

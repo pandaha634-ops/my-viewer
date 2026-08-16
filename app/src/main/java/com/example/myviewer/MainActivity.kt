@@ -3,17 +3,24 @@ package com.example.myviewer
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.view.MenuItem
 import android.view.View
+import android.widget.Button
+import android.widget.CheckBox
+import android.widget.ListView
+import android.widget.PopupMenu
+import android.widget.RadioGroup
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -24,28 +31,22 @@ import java.io.File
  * The single screen of My Viewer.
  *
  * Responsibilities:
- *  - Set up the custom toolbar (path label + buttons)
+ *  - Set up the custom toolbar (path label + buttons + settings gear)
  *  - Request storage permissions
  *  - List files in the current directory
- *  - Navigate into folders / open files with other apps
- *  - Toggle hidden files visibility
- *  - Close the app via the X button
+ *  - Open files: use saved preference if available, else show the
+ *    "Open with" picker. Remember the user's choice when asked.
+ *  - Settings dialog: change thumbnail size + clear remembered apps
+ *  - Long-press a file to reset its remembered app
  */
 class MainActivity : AppCompatActivity() {
 
-    // Auto-generated view binding class (from activity_main.xml)
     private lateinit var binding: ActivityMainBinding
-
-    // The list adapter
     private lateinit var adapter: FileAdapter
 
-    // The folder we're currently browsing
     private var currentDir: File = Environment.getExternalStorageDirectory()
-
-    // Whether to include hidden files (those starting with ".")
     private var showHidden = false
 
-    // The thumbnail loader - created once, shared with the adapter
     private val previewLoader by lazy { MediaPreviewLoader(this) }
 
     /** Permissions required to list files, varies by Android version. */
@@ -59,10 +60,8 @@ class MainActivity : AppCompatActivity() {
             else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
 
-    // Modern permission launcher (replaces the older onRequestPermissionsResult pattern)
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-            // After the user answers, reload regardless of result
             loadFiles()
             maybePromptForAllFilesAccess()
         }
@@ -83,8 +82,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // If the user came back from Settings (e.g. granted a permission),
-        // refresh the list so newly accessible files show up.
+        // Returning from Settings or an external app -> refresh.
         loadFiles()
     }
 
@@ -92,7 +90,6 @@ class MainActivity : AppCompatActivity() {
     override fun onBackPressed() {
         val parent = currentDir.parentFile
         val root = Environment.getExternalStorageDirectory()
-        // Go up one level unless we're already at the storage root
         if (parent != null && currentDir != root) {
             currentDir = parent
             loadFiles()
@@ -102,20 +99,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     // -----------------------------------------------------------------------
-    // Setup helpers
+    // Setup
     // -----------------------------------------------------------------------
 
     private fun setupRecyclerView() {
         adapter = FileAdapter(
             previewLoader = previewLoader,
-            onItemClick = ::handleItemClick
+            onItemClick = ::handleItemClick,
+            onItemLongClick = ::handleItemLongClick
         )
         binding.recyclerView.layoutManager = LinearLayoutManager(this)
         binding.recyclerView.adapter = adapter
     }
 
     private fun setupToolbarButtons() {
-        // Up: go to parent folder
         binding.upButton.setOnClickListener {
             val parent = currentDir.parentFile
             val root = Environment.getExternalStorageDirectory()
@@ -125,23 +122,18 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Refresh: re-read the current directory
         binding.refreshButton.setOnClickListener { loadFiles() }
 
-        // Show/hide hidden files
         binding.showHiddenButton.setOnClickListener {
             showHidden = !showHidden
             updateShowHiddenIcon()
             loadFiles()
         }
 
-        // Close: finish the activity (X button)
+        binding.settingsButton.setOnClickListener { showSettingsDialog() }
+
         binding.closeButton.setOnClickListener { finish() }
     }
-
-    // -----------------------------------------------------------------------
-    // Permissions
-    // -----------------------------------------------------------------------
 
     private fun requestPermissionsIfNeeded() {
         val missing = requiredPermissions.filter {
@@ -154,10 +146,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * On Android 11+, "All files access" must be granted via Settings.
-     * We prompt the user only if they haven't been asked yet.
-     */
     private fun maybePromptForAllFilesAccess() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (!Environment.isExternalStorageManager()) {
@@ -172,7 +160,6 @@ class MainActivity : AppCompatActivity() {
                             intent.data = Uri.parse("package:$packageName")
                             startActivity(intent)
                         } catch (e: Exception) {
-                            // Fallback: open the general "All files access" screen
                             startActivity(
                                 Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
                             )
@@ -192,21 +179,17 @@ class MainActivity : AppCompatActivity() {
         val items = try {
             FileUtils.listFiles(currentDir, showHidden)
         } catch (e: SecurityException) {
-            // Happens when permission is denied
             emptyList()
         }
 
         adapter.submitList(items)
 
-        // Update toolbar labels
         binding.pathText.text = currentDir.absolutePath
         binding.fileCountText.text = getString(R.string.item_count_format, items.size)
 
-        // Show empty state if there are no items
         binding.emptyView.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
         binding.recyclerView.visibility = if (items.isEmpty()) View.GONE else View.VISIBLE
 
-        // Up button: disable when at the storage root
         val canGoUp = currentDir.parentFile != null &&
                 currentDir != Environment.getExternalStorageDirectory()
         binding.upButton.isEnabled = canGoUp
@@ -228,50 +211,245 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleItemClick(item: FileItem) {
         if (item.isDirectory) {
-            // Navigate into the folder
             currentDir = item.file
             loadFiles()
         } else {
-            // Open the file with another app
-            openFile(item)
+            openFileWithSavedPreference(item)
         }
     }
 
     /**
-     * Opens a file using an external app (gallery, video player, PDF reader, etc.)
-     *
-     * We use [FileProvider] to convert the file:// URI into a content:// URI,
-     * which is the safe, modern way to share files with other apps on Android 7+.
+     * Fired on long-press of any file row.
+     * Shows a small popup that lets the user clear the remembered app
+     * for this file's extension, or open the file with a different app.
      */
-    private fun openFile(item: FileItem) {
-        val mime = item.mimeType ?: "*/*"
+    private fun handleItemLongClick(item: FileItem): Boolean {
+        if (item.isDirectory) return false
+        // Use the row's actual location for the popup anchor.
+        val anchor = binding.recyclerView.findViewById<View>(
+            android.R.id.content
+        ) ?: return false
 
-        // Build the content:// URI safely.
-        // We use [packageName] (the actual app id at runtime) instead of
-        // BuildConfig.APPLICATION_ID — the latter requires enabling
-        // `buildConfig = true` in build.gradle, which is off by default in AGP 8+.
-        val uri: Uri = try {
-            FileProvider.getUriForFile(
-                this,
-                "${packageName}.fileprovider",
-                item.file
+        val popup = PopupMenu(this, anchor)
+        val ext = item.file.extension.lowercase()
+        val hasPref = SettingsManager.getPreferredApp(this, ext) != null
+
+        // "Choose another app" is always present
+        popup.menu.add(0, MENU_OPEN_WITH_OTHER, 0, R.string.open_with_other_app)
+
+        // "Reset remembered app" only if there's actually one to reset
+        if (hasPref) {
+            popup.menu.add(
+                0,
+                MENU_RESET_PREFERRED,
+                0,
+                getString(R.string.reset_preferred_app_format, ext)
             )
-        } catch (e: Exception) {
-            // Fall back to a raw file URI (works on older Android)
-            Uri.fromFile(item.file)
         }
 
-        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+        popup.setOnMenuItemClickListener { mi: MenuItem ->
+            when (mi.itemId) {
+                MENU_OPEN_WITH_OTHER -> {
+                    openFileWithPicker(item)
+                    true
+                }
+                MENU_RESET_PREFERRED -> {
+                    SettingsManager.clearPreferredApp(this, ext)
+                    Toast.makeText(
+                        this,
+                        getString(R.string.preferred_app_cleared_format, ext),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
+        return true
+    }
+
+    // -----------------------------------------------------------------------
+    // Opening files (Feature 1)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Opens a file using a remembered app if one is set; otherwise shows
+     * the picker dialog so the user can choose.
+     */
+    private fun openFileWithSavedPreference(item: FileItem) {
+        val mime = item.mimeType ?: "*/*"
+        val ext = item.file.extension.lowercase()
+        val uri = createContentUri(item.file)
+
+        val resolveIntent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, mime)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val apps = packageManager.queryIntentActivities(resolveIntent, 0)
+
+        if (apps.isEmpty()) {
+            Toast.makeText(this, R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val savedPackage = SettingsManager.getPreferredApp(this, ext)
+        val savedAppStillInstalled = apps.any { it.activityInfo.packageName == savedPackage }
+
+        when {
+            // Remembered app exists and is installed -> go straight to it
+            savedAppStillInstalled && savedPackage != null -> launchWithPackage(uri, mime, savedPackage)
+
+            // Only one app on the phone can open this file -> use it directly
+            apps.size == 1 -> launchWithPackage(uri, mime, apps[0].activityInfo.packageName)
+
+            // Multiple options -> show picker
+            else -> showAppPicker(item.file, uri, mime, apps)
+        }
+    }
+
+    /** Called from the long-press menu: bypass any saved preference. */
+    private fun openFileWithPicker(item: FileItem) {
+        val mime = item.mimeType ?: "*/*"
+        val uri = createContentUri(item.file)
+        val resolveIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val apps = packageManager.queryIntentActivities(resolveIntent, 0)
+        if (apps.isEmpty()) {
+            Toast.makeText(this, R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
+        } else {
+            showAppPicker(item.file, uri, mime, apps)
+        }
+    }
+
+    /**
+     * Builds the FileProvider-backed content URI used to share files with
+     * other apps safely (Android 7+ forbids raw file:// URIs across apps).
+     */
+    private fun createContentUri(file: File): Uri = try {
+        FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
+    } catch (e: Exception) {
+        Uri.fromFile(file)
+    }
+
+    /**
+     * Launches the chosen app. If the app is somehow not available any
+     * more (uninstalled, broken), we fall back to the picker dialog.
+     */
+    private fun launchWithPackage(uri: Uri, mime: String, packageName: String) {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            setPackage(packageName)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-
         try {
-            // createChooser shows a "Open with" dialog if multiple apps can handle it
-            startActivity(Intent.createChooser(viewIntent, getString(R.string.open_with)))
+            startActivity(intent)
         } catch (e: Exception) {
-            Toast.makeText(this, R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, R.string.app_not_available, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * Shows a custom dialog with the list of apps that can handle
+     * this file. If the user ticks "Always use this app" and then
+     * picks one, the choice is saved to [SettingsManager].
+     */
+    private fun showAppPicker(
+        file: File,
+        uri: Uri,
+        mime: String,
+        apps: List<ResolveInfo>
+    ) {
+        val view = layoutInflater.inflate(R.layout.dialog_app_picker, null)
+        val titleText = view.findViewById<TextView>(R.id.titleText)
+        val listView = view.findViewById<ListView>(R.id.appList)
+        val alwaysCheckbox = view.findViewById<CheckBox>(R.id.alwaysUseCheckbox)
+
+        titleText.text = getString(R.string.open_with_format, file.name)
+        listView.adapter = AppPickerAdapter(this, apps)
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(view)
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+
+        listView.setOnItemClickListener { _, _, position, _ ->
+            val packageName = apps[position].activityInfo.packageName
+            val ext = file.extension.lowercase()
+
+            if (alwaysCheckbox.isChecked) {
+                SettingsManager.setPreferredApp(this, ext, packageName)
+            }
+            launchWithPackage(uri, mime, packageName)
+            dialog.dismiss()
+        }
+
+        dialog.show()
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings dialog (Feature 2)
+    // -----------------------------------------------------------------------
+
+    private fun showSettingsDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_settings, null)
+        val sizeGroup = view.findViewById<RadioGroup>(R.id.thumbnailSizeGroup)
+        val countText = view.findViewById<TextView>(R.id.preferredAppsCountText)
+        val clearButton = view.findViewById<Button>(R.id.clearPreferredAppsButton)
+
+        // Initial selection based on current preference
+        when (SettingsManager.getThumbnailSize(this)) {
+            ThumbnailSize.SMALL -> sizeGroup.check(R.id.sizeSmall)
+            ThumbnailSize.LARGE -> sizeGroup.check(R.id.sizeLarge)
+            else -> sizeGroup.check(R.id.sizeMedium)
+        }
+
+        updatePreferredAppsCount(countText)
+        clearButton.isEnabled = SettingsManager.getPreferredAppCount(this) > 0
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.settings)
+            .setView(view)
+            .setPositiveButton(R.string.cancel, null)
+            .create()
+
+        sizeGroup.setOnCheckedChangeListener { _, checkedId ->
+            val newSize = when (checkedId) {
+                R.id.sizeSmall -> ThumbnailSize.SMALL
+                R.id.sizeLarge -> ThumbnailSize.LARGE
+                else -> ThumbnailSize.MEDIUM
+            }
+            if (newSize != SettingsManager.getThumbnailSize(this)) {
+                SettingsManager.setThumbnailSize(this, newSize)
+                // Re-bind the list so sizes update immediately
+                loadFiles()
+            }
+        }
+
+        clearButton.setOnClickListener {
+            SettingsManager.clearAllPreferredApps(this)
+            Toast.makeText(this, R.string.preferred_apps_cleared, Toast.LENGTH_SHORT).show()
+            updatePreferredAppsCount(countText)
+            clearButton.isEnabled = false
+        }
+
+        dialog.show()
+    }
+
+    private fun updatePreferredAppsCount(textView: TextView) {
+        val count = SettingsManager.getPreferredAppCount(this)
+        textView.text = if (count == 0) {
+            getString(R.string.preferred_apps_none)
+        } else {
+            getString(R.string.preferred_apps_count_format, count)
+        }
+    }
+
+    companion object {
+        private const val MENU_OPEN_WITH_OTHER = 1
+        private const val MENU_RESET_PREFERRED = 2
     }
 }
