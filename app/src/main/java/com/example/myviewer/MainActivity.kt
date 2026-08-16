@@ -12,19 +12,17 @@ import android.provider.Settings
 import android.view.MenuItem
 import android.view.View
 import android.widget.Button
-import android.widget.CheckBox
-import android.widget.ListView
-import android.widget.PopupMenu
 import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.example.myviewer.databinding.ActivityMainBinding
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.io.File
 
 /**
@@ -354,8 +352,11 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Shows a custom dialog with the list of apps that can handle
-     * this file. If the user ticks "Always use this app" and then
+     * this file. If the user toggles "Always use this app" and then
      * picks one, the choice is saved to [SettingsManager].
+     *
+     * The currently-saved default app (if any) gets a "✓ Default"
+     * badge next to its name.
      */
     private fun showAppPicker(
         file: File,
@@ -366,21 +367,27 @@ class MainActivity : AppCompatActivity() {
         val view = layoutInflater.inflate(R.layout.dialog_app_picker, null)
         val titleText = view.findViewById<TextView>(R.id.titleText)
         val listView = view.findViewById<ListView>(R.id.appList)
-        val alwaysCheckbox = view.findViewById<CheckBox>(R.id.alwaysUseCheckbox)
+        val alwaysSwitch = view.findViewById<SwitchCompat>(R.id.alwaysUseSwitch)
 
         titleText.text = getString(R.string.open_with_format, file.name)
-        listView.adapter = AppPickerAdapter(this, apps)
 
-        val dialog = AlertDialog.Builder(this)
+        val ext = file.extension.lowercase()
+        val preferredPackage = SettingsManager.getPreferredApp(this, ext)
+        // Pre-check the "always use" switch if a default is already set
+        alwaysSwitch.isChecked = preferredPackage != null
+
+        listView.adapter = AppPickerAdapter(this, apps, preferredPackage)
+
+        // Material-styled AlertDialog so the picker matches the rest of the app.
+        val dialog = MaterialAlertDialogBuilder(this)
             .setView(view)
             .setNegativeButton(R.string.cancel, null)
             .create()
 
         listView.setOnItemClickListener { _, _, position, _ ->
             val packageName = apps[position].activityInfo.packageName
-            val ext = file.extension.lowercase()
 
-            if (alwaysCheckbox.isChecked) {
+            if (alwaysSwitch.isChecked) {
                 SettingsManager.setPreferredApp(this, ext, packageName)
             }
             launchWithPackage(uri, mime, packageName)
@@ -410,7 +417,7 @@ class MainActivity : AppCompatActivity() {
         updatePreferredAppsCount(countText)
         clearButton.isEnabled = SettingsManager.getPreferredAppCount(this) > 0
 
-        val dialog = AlertDialog.Builder(this)
+        val dialog = MaterialAlertDialogBuilder(this)
             .setTitle(R.string.settings)
             .setView(view)
             .setPositiveButton(R.string.cancel, null)

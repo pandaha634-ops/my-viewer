@@ -4,31 +4,42 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:paddingHorizontal="24dp"
+    android:paddingTop="20dp"
+    android:paddingBottom="8dp">
 
     <TextView
         android:id="@+id/titleText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="12dp"
+        android:layout_marginBottom="16dp"
         android:textSize="16sp"
         android:textStyle="bold" />
 
     <!-- The list of installed apps that can open this file.
-         We give it a fixed maxHeight of 320dp so:
-           - all rows are always rendered (no 0dp-height gotchas)
-           - long lists scroll inside the ListView, not the dialog -->
+         Fixed height of 320dp ~ 5 visible rows; the rest scroll inside the list. -->
     <ListView
         android:id="@+id/appList"
         android:layout_width="match_parent"
         android:layout_height="320dp"
+        android:divider="@null"
+        android:dividerHeight="0dp"
         android:scrollbars="vertical" />
 
-    <CheckBox
-        android:id="@+id/alwaysUseCheckbox"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+    <!-- Divider between app list and the "always use" toggle. -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
         android:layout_marginTop="8dp"
-        android:text="@string/always_use_this_app" />
+        android:layout_marginBottom="4dp"
+        android:background="?android:attr/listDivider" />
+
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/alwaysUseSwitch"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="@string/always_use_this_app"
+        android:textSize="14sp" />
 
 </LinearLayout>
