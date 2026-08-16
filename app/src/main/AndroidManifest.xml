@@ -2,6 +2,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- ============================================================== -->
+    <!-- <queries>: tell Android what other apps we want to "see".        -->
+    <!-- Without this, on Android 11+ the PackageManager returns only a  -->
+    <!-- small subset of installed apps in queryIntentActivities().      -->
+    <!-- ============================================================== -->
+    <queries>
+        <!-- We want to find any app that can VIEW any file/data type. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+        </intent>
+        <!-- We also want to query generic SEND/SENDTO intents -->
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
+    </queries>
+
     <!-- Storage permissions -->
     <!-- Android 12 and below -->
     <uses-permission

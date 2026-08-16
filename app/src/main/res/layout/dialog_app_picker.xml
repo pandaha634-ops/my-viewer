@@ -14,13 +14,14 @@
         android:textSize="16sp"
         android:textStyle="bold" />
 
-    <!-- The list of installed apps that can open this file. -->
+    <!-- The list of installed apps that can open this file.
+         We give it a fixed maxHeight of 320dp so:
+           - all rows are always rendered (no 0dp-height gotchas)
+           - long lists scroll inside the ListView, not the dialog -->
     <ListView
         android:id="@+id/appList"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:minHeight="180dp"
+        android:layout_height="320dp"
         android:scrollbars="vertical" />
 
     <CheckBox
