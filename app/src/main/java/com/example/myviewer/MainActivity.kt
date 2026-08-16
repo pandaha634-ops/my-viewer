@@ -442,6 +442,23 @@ class MainActivity : AppCompatActivity() {
         updatePreferredAppsCount(countText)
         clearButton.isEnabled = SettingsManager.getPreferredAppCount(this) > 0
 
+        // Show app version (read from PackageManager - no BuildConfig needed
+        // because we don't enable the buildConfig feature flag).
+        val versionText = view.findViewById<TextView>(R.id.versionInfoText)
+        versionText.text = try {
+            val info = packageManager.getPackageInfo(packageName, 0)
+            val versionName = info.versionName
+                ?: getString(R.string.version_info_unknown)
+            val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                info.longVersionCode
+            } else {
+                @Suppress("DEPRECATION") info.versionCode.toLong()
+            }
+            getString(R.string.version_info_format, versionName, versionCode)
+        } catch (e: Exception) {
+            getString(R.string.version_info_unknown)
+        }
+
         val dialog = MaterialAlertDialogBuilder(this)
             .setTitle(R.string.settings)
             .setView(view)

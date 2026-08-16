@@ -47,4 +47,8 @@
     <string name="open_as_document">Open as Document</string>
     <string name="open_with_all_apps">Open with all apps</string>
     <string name="no_apps_in_category">No apps found for that file category</string>
+    <!-- Settings dialog: version info -->
+    <string name="about">About</string>
+    <string name="version_info_format">App version %1$s (build %2$d)</string>
+    <string name="version_info_unknown">Version unavailable</string>
 </resources>
