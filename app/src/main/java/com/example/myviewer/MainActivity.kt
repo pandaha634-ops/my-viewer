@@ -35,10 +35,10 @@ import java.io.File
  *  - Set up the custom toolbar (path label + buttons + settings gear)
  *  - Request storage permissions
  *  - List files in the current directory
- *  - Open files: use saved preference if available, else show the
- *    "Open with" picker. Remember the user's choice when asked.
- *  - Settings dialog: change thumbnail size + clear remembered apps
- *  - Long-press a file to reset its remembered app
+ *  - Open files via the remembered app, or show a picker, optionally
+ *    forcing a category MIME so the list is narrowed (the
+ *    "Open as Photo / Video / Audio / Document" long-press items).
+ *  - Settings dialog (thumbnail size, clear remembered apps)
  */
 class MainActivity : AppCompatActivity() {
 
@@ -50,15 +50,17 @@ class MainActivity : AppCompatActivity() {
 
     private val previewLoader by lazy { MediaPreviewLoader(this) }
 
-    /** Permissions required to list files, varies by Android version. */
     private val requiredPermissions: Array<String>
-        get() = when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
-                Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VIDEO,
-                Manifest.permission.READ_MEDIA_AUDIO
-            )
-            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        get() {
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                arrayOf(
+                    Manifest.permission.READ_MEDIA_IMAGES,
+                    Manifest.permission.READ_MEDIA_VIDEO,
+                    Manifest.permission.READ_MEDIA_AUDIO
+                )
+            } else {
+                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
         }
 
     private val permissionLauncher =
@@ -67,9 +69,9 @@ class MainActivity : AppCompatActivity() {
             maybePromptForAllFilesAccess()
         }
 
-    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // Lifecycle
-    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,7 +85,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Returning from Settings or an external app -> refresh.
         loadFiles()
     }
 
@@ -99,9 +100,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // Setup
-    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
     private fun setupRecyclerView() {
         adapter = FileAdapter(
@@ -122,17 +123,13 @@ class MainActivity : AppCompatActivity() {
                 loadFiles()
             }
         }
-
         binding.refreshButton.setOnClickListener { loadFiles() }
-
         binding.showHiddenButton.setOnClickListener {
             showHidden = !showHidden
             updateShowHiddenIcon()
             loadFiles()
         }
-
         binding.settingsButton.setOnClickListener { showSettingsDialog() }
-
         binding.closeButton.setOnClickListener { finish() }
     }
 
@@ -148,33 +145,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun maybePromptForAllFilesAccess() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                AlertDialog.Builder(this)
-                    .setTitle(R.string.grant_all_files_access)
-                    .setMessage(R.string.grant_all_files_message)
-                    .setPositiveButton(R.string.open_settings) { _, _ ->
-                        try {
-                            val intent = Intent(
-                                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION
-                            )
-                            intent.data = Uri.parse("package:$packageName")
-                            startActivity(intent)
-                        } catch (e: Exception) {
-                            startActivity(
-                                Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                            )
-                        }
-                    }
-                    .setNegativeButton(R.string.cancel, null)
-                    .show()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        if (Environment.isExternalStorageManager()) return
+        AlertDialog.Builder(this)
+            .setTitle(R.string.grant_all_files_access)
+            .setMessage(R.string.grant_all_files_message)
+            .setPositiveButton(R.string.open_settings) { _, _ ->
+                try {
+                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    intent.data = Uri.parse("package:$packageName")
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                }
             }
-        }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
-    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // File listing
-    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
     private fun loadFiles() {
         val items = try {
@@ -206,9 +197,9 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // Item clicks
-    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
     private fun handleItemClick(item: FileItem) {
         if (item.isDirectory) {
@@ -220,13 +211,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Fired on long-press of any file row.
-     * Shows a small popup that lets the user clear the remembered app
-     * for this file's extension, or open the file with a different app.
+     * Fired on long-press of any file row. Shows a popup with:
+     *  - "Open as Photo/Video/Audio/Document" so the user can force a
+     *    category MIME (handy when extension-based detection is wrong, or
+     *    when an extensionless file is in the wrong category).
+     *  - "Choose another app...": the classic wildcard picker.
+     *  - "Reset remembered app for .xyz": only if a default is saved.
      */
     private fun handleItemLongClick(item: FileItem): Boolean {
         if (item.isDirectory) return false
-        // Use the row's actual location for the popup anchor.
         val anchor = binding.recyclerView.findViewById<View>(
             android.R.id.content
         ) ?: return false
@@ -235,21 +228,41 @@ class MainActivity : AppCompatActivity() {
         val ext = item.file.extension.lowercase()
         val hasPref = SettingsManager.getPreferredApp(this, ext) != null
 
-        // "Choose another app" is always present
-        popup.menu.add(0, MENU_OPEN_WITH_OTHER, 0, R.string.open_with_other_app)
+        // Category-specific force-opens (these bypass any remembered app).
+        popup.menu.add(0, MENU_OPEN_AS_PHOTO, 0, R.string.open_as_photo)
+        popup.menu.add(0, MENU_OPEN_AS_VIDEO, 1, R.string.open_as_video)
+        popup.menu.add(0, MENU_OPEN_AS_AUDIO, 2, R.string.open_as_audio)
+        popup.menu.add(0, MENU_OPEN_AS_DOCUMENT, 3, R.string.open_as_document)
+        // Classic wildcard picker.
+        popup.menu.add(0, MENU_OPEN_WITH_OTHER, 4, R.string.open_with_other_app)
 
-        // "Reset remembered app" only if there's actually one to reset
         if (hasPref) {
             popup.menu.add(
                 0,
                 MENU_RESET_PREFERRED,
-                0,
+                5,
                 getString(R.string.reset_preferred_app_format, ext)
             )
         }
 
         popup.setOnMenuItemClickListener { mi: MenuItem ->
-            when (mi.itemId) {
+            return@setOnMenuItemClickListener when (mi.itemId) {
+                MENU_OPEN_AS_PHOTO -> {
+                    openFileInCategory(item, CATEGORY_PHOTO)
+                    true
+                }
+                MENU_OPEN_AS_VIDEO -> {
+                    openFileInCategory(item, CATEGORY_VIDEO)
+                    true
+                }
+                MENU_OPEN_AS_AUDIO -> {
+                    openFileInCategory(item, CATEGORY_AUDIO)
+                    true
+                }
+                MENU_OPEN_AS_DOCUMENT -> {
+                    openFileInCategory(item, CATEGORY_DOCUMENT)
+                    true
+                }
                 MENU_OPEN_WITH_OTHER -> {
                     openFileWithPicker(item)
                     true
@@ -270,25 +283,20 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
-    // -----------------------------------------------------------------------
-    // Opening files (Feature 1)
-    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Opening files
+    // -------------------------------------------------------------------------
 
     /**
      * Opens a file using a remembered app if one is set; otherwise shows
      * the picker dialog so the user can choose.
      */
     private fun openFileWithSavedPreference(item: FileItem) {
-        val mime = item.mimeType ?: "*/*"
+        val mime = item.mimeType ?: ANY_MIME
         val ext = item.file.extension.lowercase()
         val uri = createContentUri(item.file)
 
-        val resolveIntent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, mime)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        val apps = packageManager.queryIntentActivities(resolveIntent, 0)
-
+        val apps = queryAppsForMime(uri, mime)
         if (apps.isEmpty()) {
             Toast.makeText(this, R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
             return
@@ -298,31 +306,56 @@ class MainActivity : AppCompatActivity() {
         val savedAppStillInstalled = apps.any { it.activityInfo.packageName == savedPackage }
 
         when {
-            // Remembered app exists and is installed -> go straight to it
             savedAppStillInstalled && savedPackage != null -> launchWithPackage(uri, mime, savedPackage)
-
-            // Only one app on the phone can open this file -> use it directly
             apps.size == 1 -> launchWithPackage(uri, mime, apps[0].activityInfo.packageName)
-
-            // Multiple options -> show picker
-            else -> showAppPicker(item.file, uri, mime, apps)
+            else -> showAppPicker(item.file, uri, mime, apps, savedPackage)
         }
     }
 
     /** Called from the long-press menu: bypass any saved preference. */
     private fun openFileWithPicker(item: FileItem) {
-        val mime = item.mimeType ?: "*/*"
+        val mime = item.mimeType ?: ANY_MIME
         val uri = createContentUri(item.file)
-        val resolveIntent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, mime)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        val apps = packageManager.queryIntentActivities(resolveIntent, 0)
+        val apps = queryAppsForMime(uri, mime)
         if (apps.isEmpty()) {
             Toast.makeText(this, R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
         } else {
-            showAppPicker(item.file, uri, mime, apps)
+            showAppPicker(item.file, uri, mime, apps, null)
         }
+    }
+
+    /**
+     * Force the file to open under a specific category (image/video/audio/
+     * document). Bypasses detection AND any remembered app, since some
+     * remembered apps might not handle the forced category at all.
+     *
+     * If no apps are registered for the category we show a toast instead
+     * of an empty dialog.
+     */
+    private fun openFileInCategory(item: FileItem, categoryMime: String) {
+        val uri = createContentUri(item.file)
+        val apps = queryAppsForMime(uri, categoryMime)
+        if (apps.isEmpty()) {
+            Toast.makeText(
+                this,
+                getString(R.string.no_apps_in_category) + " (" + categoryMime + ")",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        when {
+            apps.size == 1 -> launchWithPackage(uri, categoryMime, apps[0].activityInfo.packageName)
+            else -> showAppPicker(item.file, uri, categoryMime, apps, null)
+        }
+    }
+
+    /** Wraps PackageManager.queryIntentActivities. */
+    private fun queryAppsForMime(uri: Uri, mime: String): List<ResolveInfo> {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        return packageManager.queryIntentActivities(intent, 0)
     }
 
     /**
@@ -330,15 +363,12 @@ class MainActivity : AppCompatActivity() {
      * other apps safely (Android 7+ forbids raw file:// URIs across apps).
      */
     private fun createContentUri(file: File): Uri = try {
-        FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
+        FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
     } catch (e: Exception) {
         Uri.fromFile(file)
     }
 
-    /**
-     * Launches the chosen app. If the app is somehow not available any
-     * more (uninstalled, broken), we fall back to the picker dialog.
-     */
+    /** Launches the chosen app; falls back gracefully if the app died. */
     private fun launchWithPackage(uri: Uri, mime: String, packageName: String) {
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, mime)
@@ -354,18 +384,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Shows a custom dialog with the list of apps that can handle
-     * this file. If the user toggles "Always use this app" and then
-     * picks one, the choice is saved to [SettingsManager].
-     *
-     * The currently-saved default app (if any) gets a "✓ Default"
-     * badge next to its name.
+     * Custom Material-styled "Open with..." dialog.
+     * Marks the currently-remembered app with a "Default" badge if one is set.
      */
     private fun showAppPicker(
         file: File,
         uri: Uri,
         mime: String,
-        apps: List<ResolveInfo>
+        apps: List<ResolveInfo>,
+        preferredPackage: String?
     ) {
         val view = layoutInflater.inflate(R.layout.dialog_app_picker, null)
         val titleText = view.findViewById<TextView>(R.id.titleText)
@@ -375,13 +402,11 @@ class MainActivity : AppCompatActivity() {
         titleText.text = getString(R.string.open_with_format, file.name)
 
         val ext = file.extension.lowercase()
-        val preferredPackage = SettingsManager.getPreferredApp(this, ext)
-        // Pre-check the "always use" switch if a default is already set
-        alwaysSwitch.isChecked = preferredPackage != null
+        val savedPref = preferredPackage ?: SettingsManager.getPreferredApp(this, ext)
+        alwaysSwitch.isChecked = savedPref != null
 
-        listView.adapter = AppPickerAdapter(this, apps, preferredPackage)
+        listView.adapter = AppPickerAdapter(this, apps, savedPref)
 
-        // Material-styled AlertDialog so the picker matches the rest of the app.
         val dialog = MaterialAlertDialogBuilder(this)
             .setView(view)
             .setNegativeButton(R.string.cancel, null)
@@ -389,7 +414,6 @@ class MainActivity : AppCompatActivity() {
 
         listView.setOnItemClickListener { _, _, position, _ ->
             val packageName = apps[position].activityInfo.packageName
-
             if (alwaysSwitch.isChecked) {
                 SettingsManager.setPreferredApp(this, ext, packageName)
             }
@@ -400,9 +424,9 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    // -----------------------------------------------------------------------
-    // Settings dialog (Feature 2)
-    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Settings dialog
+    // -------------------------------------------------------------------------
 
     private fun showSettingsDialog() {
         val view = layoutInflater.inflate(R.layout.dialog_settings, null)
@@ -410,7 +434,6 @@ class MainActivity : AppCompatActivity() {
         val countText = view.findViewById<TextView>(R.id.preferredAppsCountText)
         val clearButton = view.findViewById<Button>(R.id.clearPreferredAppsButton)
 
-        // Initial selection based on current preference
         when (SettingsManager.getThumbnailSize(this)) {
             ThumbnailSize.SMALL -> sizeGroup.check(R.id.sizeSmall)
             ThumbnailSize.LARGE -> sizeGroup.check(R.id.sizeLarge)
@@ -434,7 +457,6 @@ class MainActivity : AppCompatActivity() {
             }
             if (newSize != SettingsManager.getThumbnailSize(this)) {
                 SettingsManager.setThumbnailSize(this, newSize)
-                // Re-bind the list so sizes update immediately
                 loadFiles()
             }
         }
@@ -459,7 +481,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val MENU_OPEN_WITH_OTHER = 1
-        private const val MENU_RESET_PREFERRED = 2
+        // Long-press popup menu IDs.
+        private const val MENU_OPEN_AS_PHOTO = 0
+        private const val MENU_OPEN_AS_VIDEO = 1
+        private const val MENU_OPEN_AS_AUDIO = 2
+        private const val MENU_OPEN_AS_DOCUMENT = 3
+        private const val MENU_OPEN_WITH_OTHER = 4
+        private const val MENU_RESET_PREFERRED = 5
+
+        // Category wildcards used by the force-open menus.
+        private const val CATEGORY_PHOTO = "image/*"
+        private const val CATEGORY_VIDEO = "video/*"
+        private const val CATEGORY_AUDIO = "audio/*"
+        private const val CATEGORY_DOCUMENT = "application/*"
+
+        // Constant for "any file" wildcard.
+        private const val ANY_MIME = "*/*"
     }
 }
