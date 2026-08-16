@@ -26,7 +26,7 @@ import androidx.recyclerview.widget.RecyclerView
 class FileAdapter(
     private val previewLoader: MediaPreviewLoader,
     private val onItemClick: (FileItem) -> Unit,
-    private val onItemLongClick: (FileItem) -> Boolean
+    private val onItemLongClick: (View, FileItem) -> Boolean
 ) : ListAdapter<FileItem, FileAdapter.ViewHolder>(DiffCallback()) {
 
     /** View holder for a single row. */
@@ -62,7 +62,8 @@ class FileAdapter(
 
         // Click & long-click
         holder.itemView.setOnClickListener { onItemClick(item) }
-        holder.itemView.setOnLongClickListener { onItemLongClick(item) }
+        // Pass the touched view through so the popup can anchor at the row.
+        holder.itemView.setOnLongClickListener { v -> onItemLongClick(v, item) }
     }
 
     /**

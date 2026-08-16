@@ -217,14 +217,13 @@ class MainActivity : AppCompatActivity() {
      *    when an extensionless file is in the wrong category).
      *  - "Choose another app...": the classic wildcard picker.
      *  - "Reset remembered app for .xyz": only if a default is saved.
+     *
+     * [anchorView] is the touched row view, used as the popup's anchor so
+     * the menu appears right next to where the user pressed.
      */
-    private fun handleItemLongClick(item: FileItem): Boolean {
+    private fun handleItemLongClick(anchorView: View, item: FileItem): Boolean {
         if (item.isDirectory) return false
-        val anchor = binding.recyclerView.findViewById<View>(
-            android.R.id.content
-        ) ?: return false
-
-        val popup = PopupMenu(this, anchor)
+        val popup = PopupMenu(this, anchorView)
         val ext = item.file.extension.lowercase()
         val hasPref = SettingsManager.getPreferredApp(this, ext) != null
 
