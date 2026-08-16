@@ -40,6 +40,7 @@
     <string name="app_not_available">Preferred app is not installed. Showing app picker.</string>
     <string name="reset_preferred_app_format">Reset remembered app for .%1$s</string>
     <string name="open_with_other_app">Choose another app...</string>
+    <string name="preferred_badge">✓ Default</string>
     <string name="open_as_photo">Open as Photo</string>
     <string name="open_as_video">Open as Video</string>
     <string name="open_as_audio">Open as Audio</string>
