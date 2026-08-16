@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">My Viewer</string>
+    <string name="up">Up</string>
+    <string name="refresh">Refresh</string>
+    <string name="show_hidden">Show hidden</string>
+    <string name="hide_hidden">Hide hidden</string>
+    <string name="close_app">Close</string>
+    <string name="empty_folder">This folder is empty</string>
+    <string name="permission_needed">Storage permission is needed to browse files. Please grant access in Settings.</string>
+    <string name="no_app_to_open">No app available to open this file</string>
+    <string name="open_with">Open with</string>
+    <string name="content_desc_up">Go up one folder</string>
+    <string name="content_desc_refresh">Refresh the list</string>
+    <string name="content_desc_show_hidden">Toggle hidden files</string>
+    <string name="content_desc_close">Close the app</string>
+    <string name="content_desc_file_icon">File icon</string>
+    <string name="item_count_format">%1$d items</string>
+    <string name="grant_all_files_access">Grant All Files Access</string>
+    <string name="grant_all_files_message">To see all files on your device, please grant \"All files access\" in Settings.</string>
+    <string name="open_settings">Open Settings</string>
+    <string name="cancel">Cancel</string>
+</resources>
