@@ -246,11 +246,14 @@ class MainActivity : AppCompatActivity() {
     private fun openFile(item: FileItem) {
         val mime = item.mimeType ?: "*/*"
 
-        // Build the content:// URI safely
+        // Build the content:// URI safely.
+        // We use [packageName] (the actual app id at runtime) instead of
+        // BuildConfig.APPLICATION_ID — the latter requires enabling
+        // `buildConfig = true` in build.gradle, which is off by default in AGP 8+.
         val uri: Uri = try {
             FileProvider.getUriForFile(
                 this,
-                "${BuildConfig.APPLICATION_ID}.fileprovider",
+                "${packageName}.fileprovider",
                 item.file
             )
         } catch (e: Exception) {
